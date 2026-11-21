@@ -24,7 +24,20 @@ type Frame = {
   spyOpen?: number;
   strikes?: { putLong: number; putShort: number; callShort: number; callLong: number };
   tape?: { t: number; quote?: number | null; reject?: string | null; median?: number | null; tradable?: boolean; samples?: number; walk?: { attempt: number; working: number; phase: string; note: string } }[];
+  ticks?: { clock: string; quote: number; median: number }[];
 };
+
+function clockToSec(clock: string) {
+  const [h, m, s] = clock.split(":").map(Number);
+  return h * 3600 + m * 60 + (s || 0);
+}
+
+function secToClock(sec: number) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 const DAYS = ["2024-12-18", "2023-01-17", "2022-10-13", "2024-04-04", "2025-04-09"];
 
@@ -38,6 +51,8 @@ export default function Desk() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [tasty, setTasty] = useState("");
+  const [cursor, setCursor] = useState(0);
+  const [feed, setFeed] = useState(true);
 
   async function load(nextDay = day, nextTrader = trader) {
     setLoading(true);
@@ -53,6 +68,8 @@ export default function Desk() {
     }
     setFrames(body);
     setIndex(0);
+    setCursor(0);
+    setFeed(true);
   }
 
   useEffect(() => {
@@ -61,6 +78,51 @@ export default function Desk() {
       .then((body) => setTasty(body.message || body.error || ""))
       .catch(() => setTasty("Mode status is unavailable."));
   }, [mode, trader]);
+
+  const ticks = frames[0]?.ticks ?? [];
+
+  useEffect(() => {
+    if (!feed || playing || ticks.length === 0) return;
+    const timer = setInterval(() => {
+      setCursor((c) => (c >= ticks.length - 1 ? c : c + 1));
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [feed, playing, ticks.length]);
+
+  useEffect(() => {
+    if (playing || !ticks[cursor]) return;
+    const now = clockToSec(ticks[cursor].clock);
+    let next = 0;
+    frames.forEach((item, i) => {
+      if (clockToSec(`${item.clock}:00`) <= now) next = i;
+    });
+    setIndex(next);
+  }, [cursor, playing, frames, ticks]);
+
+  function jump(next: number) {
+    const bounded = Math.max(0, Math.min(frames.length - 1, next));
+    setIndex(bounded);
+    const item = frames[bounded];
+    if (!item || ticks.length === 0) return;
+    const t = clockToSec(`${item.clock}:00`);
+    let c = 0;
+    for (let n = 0; n < ticks.length; n++) {
+      if (clockToSec(ticks[n].clock) <= t) c = n;
+      else break;
+    }
+    setCursor(c);
+  }
+
+  useEffect(() => {
+    if (!playing || !frames[index] || ticks.length === 0) return;
+    const t = clockToSec(`${frames[index].clock}:00`);
+    let c = 0;
+    for (let n = 0; n < ticks.length; n++) {
+      if (clockToSec(ticks[n].clock) <= t) c = n;
+      else break;
+    }
+    setCursor(c);
+  }, [playing, index, frames, ticks]);
 
   useEffect(() => {
     if (!playing || frames.length === 0) return;
@@ -77,7 +139,37 @@ export default function Desk() {
   }, [playing, index, frames.length]);
 
   const frame = frames[index];
-  const tape = frame?.tape || [];
+  const shown = ticks.slice(0, cursor + 1);
+  const latest = shown[shown.length - 1];
+  const recent = shown.slice(-12).reverse();
+  const now = latest ? clockToSec(latest.clock) : clockToSec("09:30:00");
+  const minutes = useMemo(() => {
+    const byMinute = new Map<string, { quote: number; median: number }>();
+    for (const tick of shown) byMinute.set(tick.clock.slice(0, 5), tick);
+    const rows: { clock: string; quote?: number; median?: number }[] = [];
+    for (let sec = clockToSec("09:30:00"); sec <= now; sec += 60) {
+      const clock = secToClock(sec).slice(0, 5);
+      const tick = byMinute.get(clock);
+      rows.push({ clock, quote: tick?.quote, median: tick?.median });
+    }
+    return rows;
+  }, [shown, now]);
+  const events = useMemo(() => {
+    const rows: { stamp: string; phase: string; note: string }[] = [];
+    for (const item of frames) {
+      if (item.phase === "watching") continue;
+      const stamp = `${item.clock}:00`;
+      if (clockToSec(stamp) <= now) rows.push({ stamp, phase: item.phase, note: item.note });
+      if (item.tape) {
+        for (const row of item.tape) {
+          if (!row.walk) continue;
+          const stamp = secToClock(clockToSec(`${item.clock}:00`) + Math.round(row.t));
+          if (clockToSec(stamp) <= now) rows.push({ stamp, phase: "walk", note: row.walk.note });
+        }
+      }
+    }
+    return rows.sort((a, b) => a.stamp.localeCompare(b.stamp));
+  }, [frames, now]);
   const ladder = useMemo(() => frame?.strikes, [frame]);
 
   return (
@@ -120,8 +212,9 @@ export default function Desk() {
           <button className="rounded border border-[#1c1915] px-3 py-2 text-sm" onClick={() => setPlaying((p) => !p)} disabled={!frames.length}>
             {playing ? "Pause" : "Play"}
           </button>
-          <button className="rounded border border-[#e2d8c8] px-3 py-2 text-sm" onClick={() => setIndex((i) => Math.max(0, i - 1))} disabled={!frames.length}>Back</button>
-          <button className="rounded border border-[#e2d8c8] px-3 py-2 text-sm" onClick={() => setIndex((i) => Math.min(frames.length - 1, i + 1))} disabled={!frames.length}>Step</button>
+          <button className="rounded border border-[#e2d8c8] px-3 py-2 text-sm" onClick={() => { setPlaying(false); jump(index - 1); }} disabled={!frames.length}>Back</button>
+          <button className="rounded border border-[#e2d8c8] px-3 py-2 text-sm" onClick={() => { setPlaying(false); jump(index + 1); }} disabled={!frames.length}>Step</button>
+          <button className="rounded border border-[#e2d8c8] px-3 py-2 text-sm" onClick={() => setFeed((on) => !on)} disabled={!ticks.length}>{feed ? "Pause quotes" : "Run quotes"}</button>
           <span className="text-sm text-[#6f675e]">{frames.length ? `${index + 1} of ${frames.length}` : "No session loaded"}</span>
         </section>
       )}
@@ -161,32 +254,50 @@ export default function Desk() {
             <p className="mt-4 text-xs text-[#6f675e]">09:30 open ${frame.spyOpen?.toFixed(2)}. Prior session ranged ${frame.priorRange?.toFixed(2)}. A range of ${frame.priorSkip?.toFixed(2)} or more would have skipped the day. Cash and the day result stay in the study's scaled dollars.</p>
           </article>
           <aside className="rounded-lg border border-[#e2d8c8] bg-[#fffaf3] p-5">
-            <h2 className="text-lg">Quote tape at the open</h2>
-            <p className="mt-1 text-xs leading-5 text-[#6f675e]">Historical option quotes are not in the study. This tape is built around the model credit so you can see a flash get rejected and the median take the fill. The day’s pnl is the backtest number, not this tape.</p>
-            <ul className="mt-3 space-y-1 text-sm">
-              {tape.map((row, i) => (
-                <li key={i} className="flex justify-between gap-3 border-b border-[#e2d8c8] py-1">
-                  <span className="text-[#6f675e]">{row.t.toFixed(1)}s</span>
-                  <span className={row.reject ? "text-[#8f2d2d]" : ""}>
-                    {row.walk ? `walk ${row.walk.attempt}: ${row.walk.note}` : row.reject ? row.reject : `quote ${row.quote?.toFixed(2)} · median ${row.median == null ? "—" : row.median.toFixed(2)}`}
-                  </span>
+            <h2 className="text-lg">Live quote</h2>
+            <p className="mt-1 text-xs leading-5 text-[#6f675e]">The package mid and its four-second median. In demo these are the model, refreshed every four seconds from 10:30. A minute with no package yet has no quote.</p>
+            {latest ? (
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <Stat label="Quote" value={latest.quote.toFixed(2)} />
+                <Stat label="Median" value={latest.median.toFixed(2)} />
+              </div>
+            ) : <p className="mt-4 text-sm text-[#6f675e]">No package on this session.</p>}
+            <p className="mt-2 text-sm text-[#9a5b12]">{latest ? latest.clock : "09:30:00"}</p>
+            <p className="mt-4 text-xs uppercase tracking-widest text-[#6f675e]">Latest 12 ticks</p>
+            <ul className="mt-2 space-y-1 text-sm">
+              {recent.map((tick) => (
+                <li key={tick.clock} className="flex justify-between border-b border-[#e2d8c8] py-1">
+                  <span className="text-[#6f675e]">{tick.clock}</span>
+                  <span>quote {tick.quote.toFixed(2)} · median {tick.median.toFixed(2)}</span>
                 </li>
               ))}
-              {tape.length === 0 && <li className="text-[#6f675e]">No order on this step.</li>}
+              {recent.length === 0 && <li className="text-[#6f675e]">Waiting for the first five quotes.</li>}
             </ul>
+            <details className="mt-4">
+              <summary className="cursor-pointer text-sm">Minute snapshots</summary>
+              <ul className="mt-2 max-h-64 space-y-1 overflow-auto text-sm">
+                {minutes.map((row) => (
+                  <li key={row.clock} className="flex justify-between border-b border-[#e2d8c8] py-1">
+                    <span className="text-[#6f675e]">{row.clock}</span>
+                    <span>{row.quote == null ? "no quote" : `quote ${row.quote.toFixed(2)} · median ${row.median?.toFixed(2)}`}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm">Events</summary>
+              <ol className="mt-2 max-h-64 space-y-2 overflow-auto text-sm">
+                {events.map((item, i) => (
+                  <li key={`${item.stamp}-${i}`}>
+                    <span className="mr-2 text-[#6f675e]">{item.stamp}</span>
+                    <span className="mr-2 uppercase">{item.phase}</span>
+                    {item.note}
+                  </li>
+                ))}
+                {events.length === 0 && <li className="text-[#6f675e]">Nothing yet.</li>}
+              </ol>
+            </details>
           </aside>
-          <article className="lg:col-span-2 rounded-lg border border-[#e2d8c8] bg-[#fffaf3] p-5">
-            <h2 className="text-lg">What the engine has done</h2>
-            <ol className="mt-3 max-h-72 space-y-2 overflow-auto text-sm">
-              {frames.slice(0, index + 1).map((item, i) => (
-                <li key={i} className={i === index ? "text-[#9a5b12]" : ""}>
-                  <span className="mr-2 text-[#6f675e]">{item.clock}</span>
-                  <span className="mr-2 uppercase">{item.phase}</span>
-                  {item.note}
-                </li>
-              ))}
-            </ol>
-          </article>
         </section>
       )}
     </main>

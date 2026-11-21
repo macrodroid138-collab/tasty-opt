@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from statistics import median
 
 import pandas as pd
 
@@ -39,6 +40,13 @@ def _clock(minute: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def _clock_hms(sec_from_open: int) -> str:
+    total = 9 * 3600 + 30 * 60 + sec_from_open
+    hour, rem = divmod(total, 3600)
+    minute, second = divmod(rem, 60)
+    return f"{hour:02d}:{minute:02d}:{second:02d}"
+
+
 def _opens() -> dict:
     table = pd.read_csv(Path(__file__).resolve().parents[1] / "data" / "session_open.csv")
     return dict(zip(table["day"].astype(str), table["open"].astype(float)))
@@ -46,6 +54,58 @@ def _opens() -> dict:
 
 def _px(scaled: float, open_px: float) -> float:
     return round(scaled * open_px / SCALE, 2)
+
+
+def _mark(spot: float, minute: float, put, call, sig: float) -> float:
+    put_px = put_spread(spot, minute, put[0], put[1], sig) if put else 0.0
+    call_px = call_spread(spot, minute, call[0], call[1], sig) if call else 0.0
+    return round(put_px + call_px, 2)
+
+
+def _spot(points, index: int, minute: float) -> float:
+    left_m, left_s = points[index]
+    if index + 1 >= len(points):
+        return left_s
+    right_m, right_s = points[index + 1]
+    if right_m <= left_m:
+        return right_s
+    weight = min(max((minute - left_m) / (right_m - left_m), 0.0), 1.0)
+    return left_s + (right_s - left_s) * weight
+
+
+def _quote_ticks(points, states, sig: float) -> list[dict]:
+    """One row every four seconds. Quote is the latest model mid. Median is
+    the middle of the one-second mids inside that four-second window, rounded
+    to the nearest cent. Five one-second mids are required before the first row."""
+    if not states:
+        return []
+    pts = [(float(m), float(s)) for m, s in points]
+    ticks = []
+    window: list[float] = []
+    path_i = 0
+    state_i = 0
+    start = int(round(states[0][0] * 60))
+    end = int(round(CLOSE_MINUTE * 60))
+    for sec in range(start, end + 1):
+        minute = sec / 60.0
+        while path_i + 1 < len(pts) and pts[path_i + 1][0] < minute:
+            path_i += 1
+        while state_i + 1 < len(states) and states[state_i + 1][0] <= minute + 1e-9:
+            state_i += 1
+        put, call = states[state_i][1], states[state_i][2]
+        if put is None and call is None:
+            break
+        quote = _mark(_spot(pts, path_i, minute), minute, put, call, sig)
+        window.append(quote)
+        if len(window) > 5:
+            del window[0]
+        if sec % 4 == 0 and len(window) >= 5:
+            ticks.append({
+                "clock": _clock_hms(sec),
+                "quote": quote,
+                "median": round(float(median(window)), 2),
+            })
+    return ticks
 
 
 def _tape(credit: float) -> list[dict]:
@@ -145,6 +205,13 @@ def trace_day(day: str, clip: bool) -> list[dict]:
          tape=_tape(credit))
     put = (put_k, WIDTH)
     call = (call_k, WIDTH)
+    states = [(pts[0][0], put, call)]
+
+    def finish():
+        if frames:
+            frames[0]["ticks"] = _quote_ticks(points, states, sig)
+        return frames
+
     pending = None
     bank_at = dist + 2
     next_watch = 75.0
@@ -173,8 +240,9 @@ def trace_day(day: str, clip: bool) -> list[dict]:
                 cash = cash - cost * 100.0 - FEE * 4 - SLIP * 100.0
                 push(minute, "buyback", f"Untouched condor could be bought for {cost:.2f}, which is 40% of the {credit:.2f} credit. Bought it.",
                      pnl=round(cash, 2), price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2), put="flat", call="flat")
+                states.append((minute, None, None))
                 _check(day, clip, close_px, points, cash)
-                return frames
+                return finish()
         if put and put[1] == WIDTH and price <= put[0] - 1:
             k = put[0]
             cash -= put_spread(price, minute, k - 2, 3, sig) * 100.0 + FEE * 2 + SLIP * 100.0
@@ -191,8 +259,9 @@ def trace_day(day: str, clip: bool) -> list[dict]:
             liq = _close_package(cash, minute, price, put, call, sig)
             if liq <= -100.0:
                 push(minute, "stop", "The day is down $100. Flattened.", pnl=round(liq, 2), price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(liq, 2), put="flat", call="flat")
+                states.append((minute, None, None))
                 _check(day, clip, close_px, points, liq)
-                return frames
+                return finish()
         if pending is None and minute < BANK_CUTOFF and (put or call):
             if call and price <= anchor - bank_at:
                 k, w = call
@@ -212,12 +281,14 @@ def trace_day(day: str, clip: bool) -> list[dict]:
             push(minute, phase, note, pnl=None, price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2),
                  put="flat" if not put else f"{put[1]}-wide", call="flat" if not call else f"{call[1]}-wide",
                  pending=None if not pending else pending["dir"])
+        states.append((minute, put, call))
     if put or call:
         cash = _close_package(cash, CLOSE_MINUTE, close_px, put, call, sig)
     push(CLOSE_MINUTE, "close", "15:15. Bought back whatever was still open.", pnl=round(cash, 2), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2),
          put="flat" if not put else f"{put[1]}-wide", call="flat" if not call else f"{call[1]}-wide")
+    states.append((CLOSE_MINUTE, None, None))
     _check(day, clip, close_px, points, cash)
-    return frames
+    return finish()
 
 
 def _check(day, clip, close_px, points, cash) -> None:
