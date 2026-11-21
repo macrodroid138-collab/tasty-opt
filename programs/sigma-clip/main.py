@@ -11,11 +11,13 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from programs.common.tasty import TastyClient  # noqa: E402
+from src.paths import project_root  # noqa: E402
 from src.trace import trace_day  # noqa: E402
+
+ROOT = project_root()
 
 
 def main() -> None:

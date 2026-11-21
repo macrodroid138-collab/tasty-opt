@@ -6,8 +6,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.engine import monthly, run, score
+from src.paths import project_root
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = project_root()
 OUT = ROOT / "results"
 
 EXPECTED = {
