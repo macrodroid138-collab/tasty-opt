@@ -225,7 +225,8 @@ jumped by 15 cents or more unless the underlying moved; and the package is
 within 20 cents of the frozen Black-Scholes mark. A rejected tick does not
 move the median. The last good median stands until a new valid one exists.
 If that value is older than eight seconds, it is not tradable. A median needs
-at least five samples inside the last four seconds.
+at least five samples inside the last four seconds, and it is rounded to the
+nearest cent before anyone works an order.
 
 Decisions are made on a four-second clock against that rolling median. The
 program does not snapshot one tick every four seconds.

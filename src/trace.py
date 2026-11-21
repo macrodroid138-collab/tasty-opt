@@ -51,7 +51,7 @@ def _tape(credit: float) -> list[dict]:
             "t": round(ts, 1),
             "quote": None if state.last_reject else round(price, 2),
             "reject": state.last_reject,
-            "median": None if state.value is None else round(state.value, 4),
+            "median": None if state.value is None else state.value,
             "tradable": state.tradable,
             "samples": state.samples,
         })

@@ -95,7 +95,8 @@ class QuoteBook:
         self.state.samples = len(prices)
         self.state.last_reject = None
         if len(prices) >= MIN_SAMPLES:
-            self.state.value = float(median(prices))
+            # A limit is a whole cent. 0.8397 is not a price anyone can send.
+            self.state.value = round(float(median(prices)), 2)
             self.state.last_good_ts = package.ts
         self.state.tradable = self._is_fresh(package.ts)
         return self.state

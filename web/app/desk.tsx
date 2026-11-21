@@ -166,7 +166,7 @@ export default function Desk() {
                 <li key={i} className="flex justify-between gap-3 border-b border-[#e2d8c8] py-1">
                   <span className="text-[#6f675e]">{row.t.toFixed(1)}s</span>
                   <span className={row.reject ? "text-[#8f2d2d]" : ""}>
-                    {row.walk ? `walk ${row.walk.attempt}: ${row.walk.note}` : row.reject ? row.reject : `quote ${row.quote} · median ${row.median ?? "—"}`}
+                    {row.walk ? `walk ${row.walk.attempt}: ${row.walk.note}` : row.reject ? row.reject : `quote ${row.quote?.toFixed(2)} · median ${row.median == null ? "—" : row.median.toFixed(2)}`}
                   </span>
                 </li>
               ))}

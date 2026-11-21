@@ -96,7 +96,7 @@ class OrderWalk:
         too, so worse means a larger debit. The sign lives on the order,
         not here: this helper subtracts for credits and the runtime adds
         for debits by passing a negated median. See runtime.worse_price."""
-        return median - concession
+        return round(median - concession, 2)
 
     @staticmethod
     def _is_worse(price: float, than: float) -> bool:
