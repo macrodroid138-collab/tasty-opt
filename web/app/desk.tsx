@@ -20,6 +20,8 @@ type Frame = {
   call?: string;
   pending?: string | null;
   priorRange?: number;
+  priorSkip?: number;
+  spyOpen?: number;
   strikes?: { putLong: number; putShort: number; callShort: number; callLong: number };
   tape?: { t: number; quote?: number | null; reject?: string | null; median?: number | null; tradable?: boolean; samples?: number; walk?: { attempt: number; working: number; phase: string; note: string } }[];
 };
@@ -137,7 +139,7 @@ export default function Desk() {
             <dl className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
               <Stat label="Volatility" value={`${(frame.sig * 100).toFixed(1)}%`} />
               <Stat label="Source" value={frame.ivSource} />
-              <Stat label="Distance" value={frame.dist ? `${frame.dist} pts` : "—"} />
+              <Stat label="Distance" value={frame.dist ? `$${frame.dist.toFixed(2)}` : "—"} />
               <Stat label="Anchor" value={frame.anchor?.toFixed(2) ?? "—"} />
               <Stat label="Put wing" value={frame.put ?? "—"} />
               <Stat label="Call wing" value={frame.call ?? "—"} />
@@ -146,7 +148,7 @@ export default function Desk() {
             </dl>
             {ladder && (
               <div className="mt-5">
-                <p className="text-xs uppercase tracking-widest text-[#6f675e]">Strikes, scaled</p>
+                <p className="text-xs uppercase tracking-widest text-[#6f675e]">Strikes</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                   <Pill label="put long" value={ladder.putLong} />
                   <Pill label="put short" value={ladder.putShort} hot />
@@ -156,7 +158,7 @@ export default function Desk() {
                 </div>
               </div>
             )}
-            <p className="mt-4 text-xs text-[#6f675e]">Prior session range {frame.priorRange} scaled points. A range of 16 or more would have skipped the day.</p>
+            <p className="mt-4 text-xs text-[#6f675e]">09:30 open ${frame.spyOpen?.toFixed(2)}. Prior session ranged ${frame.priorRange?.toFixed(2)}. A range of ${frame.priorSkip?.toFixed(2)} or more would have skipped the day. Cash and the day result stay in the study's scaled dollars.</p>
           </article>
           <aside className="rounded-lg border border-[#e2d8c8] bg-[#fffaf3] p-5">
             <h2 className="text-lg">Quote tape at the open</h2>
@@ -211,7 +213,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 function Pill({ label, value, hot }: { label: string; value: number; hot?: boolean }) {
   return (
     <span className={`rounded px-2 py-1 ${hot ? "bg-[#9a5b12] text-[#fffaf3]" : "bg-[#f4efe6]"}`}>
-      {label} {value.toFixed(0)}
+      {label} {value.toFixed(2)}
     </span>
   );
 }

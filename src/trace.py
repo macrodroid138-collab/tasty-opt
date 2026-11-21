@@ -8,6 +8,7 @@ model credit. Historical option quotes are not in the study.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pandas as pd
 
@@ -30,9 +31,21 @@ from programs.common.quotes import LegQuote, PackageQuote, QuoteBook
 from programs.common.walk import OrderWalk
 
 
+SCALE = 691.0
+
+
 def _clock(minute: float) -> str:
     total = 9 * 60 + 30 + int(minute)
     return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def _opens() -> dict:
+    table = pd.read_csv(Path(__file__).resolve().parents[1] / "data" / "session_open.csv")
+    return dict(zip(table["day"].astype(str), table["open"].astype(float)))
+
+
+def _px(scaled: float, open_px: float) -> float:
+    return round(scaled * open_px / SCALE, 2)
 
 
 def _tape(credit: float) -> list[dict]:
@@ -77,12 +90,19 @@ def trace_day(day: str, clip: bool) -> list[dict]:
     close_px = float(row["close_px"])
     gap = (target - pd.Timestamp(prior["day"])).days
     range_skip = gap <= 10 and float(prior["range_pts"]) >= 16
+    opens = _opens()
+    open_px = float(opens[day])
+    prior_open = float(opens[str(pd.Timestamp(prior["day"]).date())])
+    prior_range = _px(float(prior["range_pts"]), prior_open)
+    prior_skip = _px(16.0, prior_open)
     base = {
         "day": day,
         "trader": "sigma-clip" if clip else "sigma-carry",
         "sig": sig,
         "ivSource": srcmap[target],
-        "priorRange": round(float(prior["range_pts"]), 2),
+        "spyOpen": open_px,
+        "priorRange": prior_range,
+        "priorSkip": prior_skip,
     }
     frames: list[dict] = []
 
@@ -90,7 +110,7 @@ def trace_day(day: str, clip: bool) -> list[dict]:
         frames.append({**base, "minute": minute, "clock": _clock(minute) if minute is not None else "09:30", "phase": phase, "note": note, "pnl": extra.get("pnl"), **extra})
 
     if range_skip:
-        push(0, "skip", f"Prior range {float(prior['range_pts']):.1f} scaled points is at least 16. No trade.", pnl=0.0)
+        push(0, "skip", f"Prior range ${prior_range:.2f} is at least ${prior_skip:.2f}. No trade.", pnl=0.0)
         return frames
     if sig < IV_FLOOR:
         push(0, "skip", f"Volatility {sig:.1%} is under 11%. No trade.", pnl=0.0)
@@ -105,15 +125,22 @@ def trace_day(day: str, clip: bool) -> list[dict]:
     dist = max(6, int(round(anchor * sig * math.sqrt(time_to_expiry(pts[0][0])))))
     put_k = int(round(anchor)) - dist
     call_k = int(round(anchor)) + dist
+    real_dist = _px(dist, open_px)
+    real_anchor = _px(anchor, open_px)
+    strikes = {
+        "putLong": _px(put_k - 5, open_px),
+        "putShort": _px(put_k, open_px),
+        "callShort": _px(call_k, open_px),
+        "callLong": _px(call_k + 5, open_px),
+    }
     if morning_range >= dist:
-        push(ENTRY_MINUTE, "skip", f"First hour ranged {morning_range:.1f}, which already covers the {dist}-point short. No trade.", pnl=0.0, dist=dist, anchor=round(anchor, 2))
+        push(ENTRY_MINUTE, "skip", f"First hour ranged ${_px(morning_range, open_px):.2f}, which already covers the ${real_dist:.2f} short. No trade.", pnl=0.0, dist=real_dist, anchor=real_anchor)
         return frames
 
     credit = put_spread(anchor, pts[0][0], put_k, WIDTH, sig) + call_spread(anchor, pts[0][0], call_k, WIDTH, sig)
     cash = credit * 100.0 - FEE * 4 - SLIP * 100.0
-    push(pts[0][0], "entry", f"Sold the {dist}-point condor for {credit:.2f} credit. Fees $4, slippage $2.",
-         pnl=None, dist=dist, anchor=round(anchor, 2),
-         strikes={"putLong": put_k - 5, "putShort": put_k, "callShort": call_k, "callLong": call_k + 5},
+    push(pts[0][0], "entry", f"Sold the condor ${_px(dist, open_px):.2f} from SPY for {credit:.2f} credit. Fees $4, slippage $2.",
+         pnl=None, dist=real_dist, anchor=real_anchor, strikes=strikes,
          credit=round(credit, 4), cash=round(cash, 2), put="5-wide", call="5-wide",
          tape=_tape(credit))
     put = (put_k, WIDTH)
@@ -123,8 +150,8 @@ def trace_day(day: str, clip: bool) -> list[dict]:
     next_watch = 75.0
     for minute, price in pts[1:]:
         while minute >= next_watch:
-            push(next_watch, "watching", f"Still watching. Scaled price {price:.2f}. Nothing new to do.",
-                 price=round(price, 2), dist=dist, anchor=round(anchor, 2), cash=round(cash, 2),
+            push(next_watch, "watching", f"Still watching. SPY {_px(price, open_px):.2f}. Nothing new to do.",
+                 price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2),
                  put="flat" if not put else f"{put[1]}-wide", call="flat" if not call else f"{call[1]}-wide",
                  pending=None if not pending else pending["dir"])
             next_watch += 15
@@ -133,10 +160,10 @@ def trace_day(day: str, clip: bool) -> list[dict]:
         if pending is not None:
             if pending["dir"] == "down" and price >= anchor - 4:
                 pending = None
-                note = "Price came back inside 4 points. The pending flag cleared."
+                note = f"Price came back inside ${_px(4, open_px):.2f} of the anchor. The pending flag cleared."
             elif pending is not None and pending["dir"] == "up" and price <= anchor + 4:
                 pending = None
-                note = "Price came back inside 4 points. The pending flag cleared."
+                note = f"Price came back inside ${_px(4, open_px):.2f} of the anchor. The pending flag cleared."
             elif pending is not None and minute + 1e-9 >= pending["minute"] + 30:
                 pending = None
                 note = "Thirty minutes passed. The pending flag cleared."
@@ -145,25 +172,25 @@ def trace_day(day: str, clip: bool) -> list[dict]:
             if cost <= credit * 0.40:
                 cash = cash - cost * 100.0 - FEE * 4 - SLIP * 100.0
                 push(minute, "buyback", f"Untouched condor could be bought for {cost:.2f}, which is 40% of the {credit:.2f} credit. Bought it.",
-                     pnl=round(cash, 2), price=round(price, 2), dist=dist, anchor=round(anchor, 2), cash=round(cash, 2), put="flat", call="flat")
+                     pnl=round(cash, 2), price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2), put="flat", call="flat")
                 _check(day, clip, close_px, points, cash)
                 return frames
         if put and put[1] == WIDTH and price <= put[0] - 1:
             k = put[0]
             cash -= put_spread(price, minute, k - 2, 3, sig) * 100.0 + FEE * 2 + SLIP * 100.0
             put = (k, 2)
-            note = f"Price traded through the put short {k}. Cut that wing to 2-wide."
+            note = f"Price traded through the put short {_px(k, open_px):.2f}. Cut that wing to 2-wide."
             phase = "touch"
         if call and call[1] == WIDTH and price >= call[0] + 1:
             k = call[0]
             cash -= call_spread(price, minute, k + 2, 3, sig) * 100.0 + FEE * 2 + SLIP * 100.0
             call = (k, 2)
-            note = f"Price traded through the call short {k}. Cut that wing to 2-wide."
+            note = f"Price traded through the call short {_px(k, open_px):.2f}. Cut that wing to 2-wide."
             phase = "touch"
         if clip and (put or call):
             liq = _close_package(cash, minute, price, put, call, sig)
             if liq <= -100.0:
-                push(minute, "stop", "The day is down $100. Flattened.", pnl=round(liq, 2), price=round(price, 2), dist=dist, anchor=round(anchor, 2), cash=round(liq, 2), put="flat", call="flat")
+                push(minute, "stop", "The day is down $100. Flattened.", pnl=round(liq, 2), price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(liq, 2), put="flat", call="flat")
                 _check(day, clip, close_px, points, liq)
                 return frames
         if pending is None and minute < BANK_CUTOFF and (put or call):
@@ -172,22 +199,22 @@ def trace_day(day: str, clip: bool) -> list[dict]:
                 cash -= call_spread(price, minute, k, w, sig) * 100.0 + FEE * 2 + SLIP * 100.0
                 call = None
                 pending = {"dir": "down", "minute": minute}
-                note = f"Price is {bank_at} points under the anchor. Bought back the call wing."
+                note = f"Price is ${_px(bank_at, open_px):.2f} under the anchor. Bought back the call wing."
                 phase = "bank"
             elif put and price >= anchor + bank_at:
                 k, w = put
                 cash -= put_spread(price, minute, k, w, sig) * 100.0 + FEE * 2 + SLIP * 100.0
                 put = None
                 pending = {"dir": "up", "minute": minute}
-                note = f"Price is {bank_at} points over the anchor. Bought back the put wing."
+                note = f"Price is ${_px(bank_at, open_px):.2f} over the anchor. Bought back the put wing."
                 phase = "bank"
         if note:
-            push(minute, phase, note, pnl=None, price=round(price, 2), dist=dist, anchor=round(anchor, 2), cash=round(cash, 2),
+            push(minute, phase, note, pnl=None, price=_px(price, open_px), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2),
                  put="flat" if not put else f"{put[1]}-wide", call="flat" if not call else f"{call[1]}-wide",
                  pending=None if not pending else pending["dir"])
     if put or call:
         cash = _close_package(cash, CLOSE_MINUTE, close_px, put, call, sig)
-    push(CLOSE_MINUTE, "close", "15:15. Bought back whatever was still open.", pnl=round(cash, 2), dist=dist, anchor=round(anchor, 2), cash=round(cash, 2),
+    push(CLOSE_MINUTE, "close", "15:15. Bought back whatever was still open.", pnl=round(cash, 2), dist=real_dist, anchor=real_anchor, strikes=strikes, cash=round(cash, 2),
          put="flat" if not put else f"{put[1]}-wide", call="flat" if not call else f"{call[1]}-wide")
     _check(day, clip, close_px, points, cash)
     return frames

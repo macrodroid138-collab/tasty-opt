@@ -30,3 +30,10 @@ Each 5-minute bar, stamped at its start, contributes four prints at +0, +1.25, +
 | iv_source | `0dte`, `front`, or `vix10`. See `traders/SHARED.md`. |
 
 `sig` on a day is known before that day's open. It is the prior close, not a 10:30 print.
+
+`session_open.csv`
+
+| column | meaning |
+|---|---|
+| day | session date |
+| open | the real 09:30 SPY price. `scaled × open / 691` is the real price. |
