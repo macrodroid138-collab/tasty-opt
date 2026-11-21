@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #1c1915;
+  --paper: #f4efe6;
+  --panel: #fffaf3;
+  --line: #e2d8c8;
+  --amber: #9a5b12;
+  --green: #1f6b45;
+  --red: #8f2d2d;
+  --muted: #6f675e;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Iowan Old Style", Palatino, serif;
+}
+
+button, input, select {
+  font-family: "Segoe UI", sans-serif;
+}

@@ -1,0 +1,39 @@
+"""Sigma Carry, independent of Sigma Clip.
+
+  python programs/sigma-carry/main.py --mode demo --day 2024-12-18
+  python programs/sigma-carry/main.py --mode live
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from programs.common.tasty import TastyClient  # noqa: E402
+from src.trace import trace_day  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Sigma Carry")
+    parser.add_argument("--mode", choices=("demo", "live"), default="demo")
+    parser.add_argument("--day", default="2023-01-17")
+    args = parser.parse_args()
+    client = TastyClient(args.mode)
+    print(json.dumps({"trader": "sigma-carry", "tasty": client.status().__dict__}, default=str))
+    if args.mode == "live":
+        if not client.status().connected and "needs" in client.status().message:
+            sys.exit(2)
+        return
+    frames = trace_day(args.day, clip=False)
+    out = ROOT / "results" / f"trace-sigma-carry-{args.day}.json"
+    out.write_text(json.dumps(frames))
+    print(json.dumps({"day": args.day, "frames": len(frames), "pnl": frames[-1]["pnl"] if frames else None, "wrote": str(out)}))
+
+
+if __name__ == "__main__":
+    main()

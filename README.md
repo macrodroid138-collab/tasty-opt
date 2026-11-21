@@ -25,6 +25,10 @@ Cents, the daily ledger, and the monthly ledger are in the trader files and in `
 | The rules as code | `src/engine.py` |
 | Rebuild both ledgers and check the accounts | `python3 src/run.py` |
 | What the data files are | `data/README.md` |
+| The whole ecosystem, the walk, and the two modes | `MANIFESTO.md` |
+| Carry as its own program | `programs/sigma-carry/main.py` |
+| Clip as its own program | `programs/sigma-clip/main.py` |
+| The desk | `web/`, `npm run dev` on port 4317 |
 
 Sigma Carry holds the condor to 15:15. Sigma Clip buys an untouched condor back once it can be repurchased for 40% of the credit, and flattens the day at a $100 loss. Same distance, same 10:30 entry, same three skips, same loss-skip, same $1-per-leg fee, same $0.02-per-order slippage.
 
@@ -38,3 +42,11 @@ python3 src/run.py
 ```
 
 The script reruns both traders from `data/` and stops if the ending account, the low, or the red-month count drifts from the published figures.
+
+## Desk
+
+Demo mode replays a session and shows each decision. Live mode is the Tastytrade production account and stays dark until `TASTY_CLIENT_SECRET`, `TASTY_REFRESH_TOKEN`, and `TASTY_ACCOUNT_NUMBER` are set. The certification site is not a mode.
+
+```
+cd web && npm install && npm run dev
+```
