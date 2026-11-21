@@ -7,11 +7,11 @@ operations inside the day loop is part of the result; do not reorder it.
 from __future__ import annotations
 
 import math
+from pathlib import Path
+
 import pandas as pd
 
-from src.paths import project_root
-
-ROOT = project_root()
+ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 
 R = 0.043

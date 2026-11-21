@@ -34,8 +34,6 @@ Sigma Carry holds the condor to 15:15. Sigma Clip buys an untouched condor back 
 
 The window is 5 January 2022 through 20 November 2026, one contract, starting equity $700. Dollars are scaled dollars, defined in `traders/SHARED.md`. The open of each session is mapped to 691 before any distance is measured.
 
-The local root is `D:\Users\Johnny\Google Drive Mirror\Gex Tide\tasty-opt`. The programs read and write there when that folder is present. `src/paths.py` is the one place that path is set.
-
 ## Rebuild
 
 ```
